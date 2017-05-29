@@ -235,6 +235,9 @@ function getCachedImagePath(url, options = defaultOptions) {
                         throw new Error('Failed to get image from cache');
                     });
             }
+            if (_.has(activeDownloads, filePath)) {
+                throw new Error('Image download is still in progress')
+            }
             return filePath;
         })
         .catch(err => {
