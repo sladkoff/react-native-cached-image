@@ -9,6 +9,7 @@ const flattenStyle = ReactNative.StyleSheet.flatten;
 const ImageCacheProvider = require('./ImageCacheProvider');
 
 const {
+    View,
     Image,
     ActivityIndicator,
     NetInfo,
@@ -35,7 +36,7 @@ const styles = StyleSheet.create({
 });
 
 function getImageProps(props) {
-    return _.omit(props, ['source', 'defaultSource', 'activityIndicatorProps', 'style', 'useQueryParamsInCacheKey', 'renderImage', 'resolveHeaders']);
+    return _.omit(props, ['source', 'defaultSource', 'fallbackSource', 'LoadingIndicator', 'activityIndicatorProps', 'style', 'useQueryParamsInCacheKey', 'renderImage', 'resolveHeaders']);
 }
 
 const CACHED_IMAGE_REF = 'cachedImage';
@@ -49,7 +50,7 @@ const CachedImage = createReactClass({
             PropTypes.array
         ]).isRequired,
         resolveHeaders: PropTypes.func,
-        cacheLocation: PropTypes.oneOf(Object.values(ImageCacheProvider.LOCATION)).isRequired
+        cacheLocation: PropTypes.string
     },
 
     getDefaultProps() {
@@ -120,8 +121,7 @@ const CachedImage = createReactClass({
     processSource(source) {
         const url = _.get(source, ['uri'], null);
         if (ImageCacheProvider.isCacheable(url)) {
-            let options = _.pick(this.props, ['useQueryParamsInCacheKey', 'cacheGroup']);
-            options.cacheLocation = this.props.cacheLocation;
+            const options = _.pick(this.props, ['useQueryParamsInCacheKey', 'cacheGroup', 'cacheLocation']);
 
             // try to get the image path from cache
             ImageCacheProvider.getCachedImagePath(url, options)
@@ -157,8 +157,17 @@ const CachedImage = createReactClass({
         const source = (this.state.isCacheable && this.state.cachedImagePath) ? {
                 uri: 'file://' + this.state.cachedImagePath
             } : this.props.source;
+        if (this.props.fallbackSource && !this.state.cachedImagePath) {
+          return this.props.renderImage({
+              ...props,
+              key: `${props.key || source.uri}error`,
+              style,
+              source: this.props.fallbackSource
+          });
+        }
         return this.props.renderImage({
             ...props,
+            key: props.key || source.uri,
             style,
             source
         });
@@ -171,11 +180,20 @@ const CachedImage = createReactClass({
         const activityIndicatorProps = _.omit(this.props.activityIndicatorProps, ['style']);
         const activityIndicatorStyle = this.props.activityIndicatorProps.style || styles.loader;
 
+        const LoadingIndicator = this.props.loadingIndicator;
+
         const source = this.props.defaultSource;
 
         // if the imageStyle has borderRadius it will break the loading image view on android
         // so we only show the ActivityIndicator
-        if (Platform.OS === 'android' && flattenStyle(imageStyle).borderRadius) {
+        if (!source || (Platform.OS === 'android' && flattenStyle(imageStyle).borderRadius)) {
+            if (LoadingIndicator) {
+              return (
+                <View style={[imageStyle, activityIndicatorStyle]}>
+                  <LoadingIndicator {...activityIndicatorProps} />
+                </View>
+              );
+            }
             return (
                 <ActivityIndicator
                     {...activityIndicatorProps}
@@ -186,11 +204,16 @@ const CachedImage = createReactClass({
         return this.props.renderImage({
             ...imageProps,
             style: imageStyle,
+            key: source.uri,
             source,
             children: (
-                <ActivityIndicator
-                    {...activityIndicatorProps}
-                    style={activityIndicatorStyle}/>
+                LoadingIndicator
+                  ? <View style={[imageStyle, activityIndicatorStyle]}>
+                      <LoadingIndicator {...activityIndicatorProps} />
+                    </View>
+                  : <ActivityIndicator
+                      {...activityIndicatorProps}
+                      style={activityIndicatorStyle}/>
             )
         });
     }

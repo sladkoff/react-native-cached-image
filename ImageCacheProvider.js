@@ -8,12 +8,9 @@ const {
     fs
 } = RNFetchBlob;
 
-const baseCacheDir = fs.dirs.CacheDir + '/imagesCacheDir';
-const baseBundleDir = fs.dirs.MainBundleDir + '/imagesCacheDir';
-
 const LOCATION = {
-    CACHE: 'cache',
-    BUNDLE: 'bundle'
+    CACHE: fs.dirs.CacheDir + '/imagesCacheDir',
+    BUNDLE: fs.dirs.MainBundleDir + '/imagesCacheDir'
 };
 
 const SHA1 = require("crypto-js/sha1");
@@ -66,11 +63,7 @@ function generateCacheKey(url, options) {
 }
 
 function getBaseDir(cacheLocation) {
-    switch (cacheLocation) {
-        case LOCATION.CACHE: return baseCacheDir;
-        case LOCATION.BUNDLE: return baseBundleDir;
-        default: return baseCacheDir;
-    }
+    return cacheLocation || LOCATION.CACHE;
 }
 
 function getCachePath(url, options) {
@@ -105,9 +98,16 @@ function getDirPath(filePath) {
 
 function ensurePath(dirPath) {
     return fs.isDir(dirPath)
-        .then(exists =>
-            !exists && fs.mkdir(dirPath)
-        )
+        .then(isDir => {
+            if (!isDir) {
+                return fs.mkdir(dirPath)
+                    .then(() => fs.exists(dirPath).then(exists => {
+                        // Check if dir has indeed been created because
+                        // there's no exception on incorrect user-defined paths (?)...
+                        if (!exists) throw new Error('Invalid cacheLocation');
+                    }))
+            }
+        })
         .catch(err => {
             // swallow folder already exists errors
             if (err.message.includes('folder already exists')) {
@@ -130,19 +130,23 @@ function ensurePath(dirPath) {
 function downloadImage(fromUrl, toFile, headers = {}) {
     // use toFile as the key as is was created using the cacheKey
     if (!_.has(activeDownloads, toFile)) {
+        //Using a temporary file, if the download is accidentally interrupted, it will not produce a disabled file
+        const tmpFile = toFile + '.tmp';
         // create an active download for this file
         activeDownloads[toFile] = new Promise((resolve, reject) => {
             RNFetchBlob
-                .config({path: toFile})
+                .config({path: tmpFile})
                 .fetch('GET', fromUrl, headers)
                 .then(res => {
                     if (Math.floor(res.respInfo.status / 100) !== 2) {
                         throw new Error('Failed to successfully download image');
                     }
-                    resolve(toFile);
+                    //The download is complete and rename the temporary file
+                    return fs.mv(tmpFile, toFile);
                 })
+                .then(() => resolve(toFile))
                 .catch(err => {
-                    return deleteFile(toFile)
+                    return deleteFile(tmpFile)
                         .then(() => reject(err));
                 })
                 .finally(() => {
@@ -318,25 +322,25 @@ function seedCache(local, url, options = defaultOptions) {
 
 /**
  * Clear the entire cache.
- * @param cacheLocation
+ * @param options
  * @returns {Promise}
  */
-function clearCache(cacheLocation) {
-    return fs.unlink(getBaseDir(cacheLocation))
+function clearCache(options = defaultOptions) {
+    return fs.unlink(getBaseDir(options.cacheLocation))
         .catch(() => {
             // swallow exceptions if path doesn't exist
         })
-        .then(() => ensurePath(getBaseDir(cacheLocation)));
+        .then(() => ensurePath(getBaseDir(options.cacheLocation)));
 }
 
 /**
  * Return info about the cache, list of files and the total size of the cache.
- * @param cacheLocation
+ * @param options
  * @returns {Promise.<{size}>}
  */
-function getCacheInfo(cacheLocation) {
-    return ensurePath(getBaseDir(cacheLocation))
-        .then(() => collectFilesInfo(getBaseDir(cacheLocation)))
+function getCacheInfo(options = defaultOptions) {
+    return ensurePath(getBaseDir(options.cacheLocation))
+        .then(() => collectFilesInfo(getBaseDir(options.cacheLocation)))
         .then(cache => {
             const files = _.flattenDeep(cache);
             const size = _.sumBy(files, 'size');
@@ -349,6 +353,7 @@ function getCacheInfo(cacheLocation) {
 
 module.exports = {
     isCacheable,
+    getCachedImageFilePath,
     getCachedImagePath,
     cacheImage,
     deleteCachedImage,
